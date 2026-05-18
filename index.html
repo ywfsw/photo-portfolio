@@ -136,7 +136,6 @@
     font-stretch: 80%;
     font-weight: 600;
     letter-spacing: 0;
-    text-transform: uppercase;
   }
 
   .repo {
@@ -512,7 +511,8 @@ const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif", ".av
 const FALLBACK_PHOTOS = [
   {
     path: "DSCF3536.jpeg",
-    src: "https://raw.githubusercontent.com/ywfsw/photos/main/DSCF3536.jpeg"
+    src: "https://cdn.jsdelivr.net/gh/ywfsw/photos@main/DSCF3536.jpeg",
+    fallbackSrc: "https://raw.githubusercontent.com/ywfsw/photos/main/DSCF3536.jpeg"
   }
 ];
 
@@ -543,9 +543,29 @@ function frameTitle(path) {
     .trim();
 }
 
+function encodedPath(path) {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+
+function cdnUrl(path) {
+  return `https://cdn.jsdelivr.net/gh/${REPO.owner}/${REPO.name}@${REPO.branch}/${encodedPath(path)}`;
+}
+
 function rawUrl(path) {
-  const encoded = path.split("/").map(encodeURIComponent).join("/");
-  return `https://raw.githubusercontent.com/${REPO.owner}/${REPO.name}/${REPO.branch}/${encoded}`;
+  return `https://raw.githubusercontent.com/${REPO.owner}/${REPO.name}/${REPO.branch}/${encodedPath(path)}`;
+}
+
+function photoFromPath(path) {
+  return {
+    path,
+    src: cdnUrl(path),
+    fallbackSrc: rawUrl(path)
+  };
+}
+
+function useRawFallback(image) {
+  if (!image.dataset.fallbackSrc || image.src === image.dataset.fallbackSrc) return;
+  image.src = image.dataset.fallbackSrc;
 }
 
 async function fetchGitHubPhotos() {
@@ -561,10 +581,7 @@ async function fetchGitHubPhotos() {
   const data = await response.json();
   return data.tree
     .filter((entry) => entry.type === "blob" && isImagePath(entry.path))
-    .map((entry) => ({
-      path: entry.path,
-      src: rawUrl(entry.path)
-    }));
+    .map((entry) => photoFromPath(entry.path));
 }
 
 function flattenPackageFiles(files, prefix = "") {
@@ -588,10 +605,7 @@ async function fetchJsDelivrIndexPhotos() {
   }
 
   const data = await response.json();
-  return flattenPackageFiles(data.files || []).map((path) => ({
-    path,
-    src: rawUrl(path)
-  }));
+  return flattenPackageFiles(data.files || []).map(photoFromPath);
 }
 
 async function loadPhotos() {
@@ -632,6 +646,7 @@ function render(photos) {
     item.className = "photo";
     item.type = "button";
     item.dataset.src = photo.src;
+    item.dataset.fallbackSrc = photo.fallbackSrc || rawUrl(photo.path);
     item.dataset.title = title;
     item.dataset.number = number;
     item.setAttribute("aria-label", `Open ${title}`);
@@ -640,9 +655,11 @@ function render(photos) {
     img.loading = index < 2 ? "eager" : "lazy";
     img.decoding = "async";
     img.alt = title;
+    img.dataset.fallbackSrc = item.dataset.fallbackSrc;
     img.src = photo.src;
     img.addEventListener("load", () => img.classList.add("is-loaded"));
-    if (img.complete) img.classList.add("is-loaded");
+    img.addEventListener("error", () => useRawFallback(img), { once: true });
+    if (img.complete && img.naturalWidth > 0) img.classList.add("is-loaded");
 
     const marker = document.createElement("div");
     marker.className = "frame-index";
@@ -670,6 +687,7 @@ function render(photos) {
 
 function openPreview(item) {
   preview.src = item.dataset.src;
+  preview.dataset.fallbackSrc = item.dataset.fallbackSrc;
   preview.alt = item.dataset.title;
   meta.textContent = `FRAME ${item.dataset.number} / ${item.dataset.title}`;
   lightbox.classList.add("is-open");
@@ -694,6 +712,7 @@ lightbox.addEventListener("click", (event) => {
 });
 
 closeButton.addEventListener("click", closePreview);
+preview.addEventListener("error", () => useRawFallback(preview));
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && lightbox.classList.contains("is-open")) {
